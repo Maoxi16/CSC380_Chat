@@ -1,5 +1,10 @@
 {
     "files.associations": {
-        "rsa.h": "c"
+      "rand.h": "c",
+      "session-key.h": "c",
+      "rsa.h": "c",
+      "aes.h": "c",
+      "hmac.h": "c",
+      "system_error": "c"
     }
-}
+  }
