@@ -10,6 +10,12 @@
 #include "dh.h"
 #include "keys.h"
 
+#include "aes.h"
+#include "aes.c"
+
+#include <openssl/rsa.h>
+#include "rsa.c"
+
 #ifndef PATH_MAX
 #define PATH_MAX 1024
 #endif
