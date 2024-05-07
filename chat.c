@@ -65,6 +65,152 @@ int initServerNet(int port)
 	/* at this point, should be able to send/recv on sockfd */
 	return 0;
 }
+int authenticateServer(){
+	unsigned char* proposed_session_key_ciphertext = malloc(RSA_KEY_LENGTH);
+
+	size_t r = recv(sockfd,proposed_session_key_ciphertext, RSA_KEY_LENGTH, 0);
+
+	if(r == 0 || r == -1){
+		fprintf(stderr, "Error authenticating server\n");
+		free(proposed_session_key_ciphertext);
+		return 1;
+	}
+
+	fprintf(stderr, "Received encrypted session key.\n");
+
+	clientAESKey = RSAdecrypt(proposed_session_key_ciphertext, "./keys/server/private.pem", AES_KEY_LENGTH);
+
+	if(clientAESKey == NULL){
+		fprintf(stderr, "Error decrypting session key.\n");
+		free(proposed_session_key_ciphertext);
+		return 1;
+	}
+
+	fprintf(stderr, "Decrypted session key.\n");
+
+	serverAESKey = generateAESKey();
+	fprintf(stderr, "Generated session key.\n");
+
+	if(serverAESKey == NULL){
+		fprintf(stderr, "Error generating session key.\n");
+		free(proposed_session_key_ciphertext);
+		free(clientAESKey);
+		return 1;
+	}
+
+	unsigned char* authMessageForClient = malloc(AES_KEY_LENGTH * 2);
+
+	memcpy(authMessageForClient, clientAESKey, AES_KEY_LENGTH);
+	memcpy(authMessageForClient + AES_KEY_LENGTH, serverAESKey, AES_KEY_LENGTH);
+
+
+	unsigned char* authMessageForClientCiphertext = RSAencrypt(authMessageForClient, "./keys/server/approved-clients/public.pem");
+
+	if(authMessageForClientCiphertext == NULL){
+		fprintf(stderr, "Error encrypting auth message for client.\n");
+		free(proposed_session_key_ciphertext);
+		free(clientAESKey);
+		free(serverAESKey);
+		free(authMessageForClient);
+		return 1;
+	}
+
+	send(sockfd, authMessageForClientCiphertext, RSA_KEY_LENGTH, 0);
+
+	unsigned char* clientConfirmationCipherText = malloc(RSA_KEY_LENGTH);
+	recv(sockfd, clientConfirmationCipherText, RSA_KEY_LENGTH, 0);
+
+
+	unsigned char* clientConfirmation = RSAdecrypt(clientConfirmationCipherText, "./keys/server/private.pem", AES_KEY_LENGTH);
+
+
+	if(memcmp(clientConfirmation, serverAESKey, AES_KEY_LENGTH) != 0){
+		fprintf(stderr, "Error authenticating server. Client did not provide the correct key.\n");
+		free(proposed_session_key_ciphertext);
+		free(clientAESKey);
+		free(serverAESKey);
+		free(authMessageForClient);
+		free(authMessageForClientCiphertext);
+		free(clientConfirmation);
+		return 1;
+	}else{
+		fprintf(stderr, "Server authenticated.\n");
+		authenticated = 1;
+	}
+
+
+	free(clientConfirmation);
+	free(proposed_session_key_ciphertext);
+	return 0;
+}
+static int authenticateClient(){
+	const char* serverPublicKeyPath = "./keys/server/public.pem";
+
+	clientAESKey = generateAESKey();
+
+	if(clientAESKey == NULL){
+		fprintf(stderr, "Error generating AES key.\n");
+		free(serverPublicKeyPath);
+		return 1;
+	}
+
+	unsigned char* encryptedClientKey = RSAencrypt(clientAESKey, serverPublicKeyPath);
+
+	if(encryptedClientKey == NULL){
+		fprintf(stderr, "Error encrypting session key.\n");
+		free(serverPublicKeyPath);
+		return 1;
+	}
+
+	fprintf(stderr, "Sending encrypted client key.\n");
+
+
+    send(sockfd,encryptedClientKey,RSA_KEY_LENGTH,0);
+
+
+	unsigned char* authMessageCipherText = malloc(RSA_KEY_LENGTH);
+
+	size_t r = recv(sockfd,authMessageCipherText, RSA_KEY_LENGTH, 0);
+
+	if(r == 0 || r == -1){
+		fprintf(stderr, "Error authenticating client\n");
+		free(authMessageCipherText);
+		free(encryptedClientKey);
+		return 1;
+	}
+
+	unsigned char* authMessage = RSAdecrypt(authMessageCipherText, "./keys/client/private.pem", AES_KEY_LENGTH * 2);
+
+	if(authMessage == NULL){
+		fprintf(stderr, "Error decrypting auth message.\n");
+		free(authMessageCipherText);
+		free(encryptedClientKey);
+		return 1;
+	}
+
+	int keyMatches = memcmp(clientAESKey, authMessage, AES_KEY_LENGTH);
+
+	if(keyMatches == 0){
+		authenticated = 1;
+		serverAESKey = authMessage + AES_KEY_LENGTH;
+		fprintf(stderr, "Client authenticated.\n");
+		unsigned char* serverKey = authMessage + AES_KEY_LENGTH;
+
+		unsigned char* confirmationMessage = malloc(AES_KEY_LENGTH + AES_BLOCK_SIZE);
+
+		unsigned char* serverCipher = RSAencrypt(serverAESKey, "./keys/server/public.pem");
+
+		send(sockfd,serverCipher,RSA_KEY_LENGTH,0);
+	}else{
+		fprintf(stderr, "Error authenticating client. Server did not provide the correct key.\n");
+		free(authMessageCipherText);
+		free(encryptedClientKey);
+		free(authMessage);
+		return 1;
+	}
+
+	return 0;
+}
 
 static int initClientNet(char* hostname, int port)
 {
@@ -155,6 +301,26 @@ static void sendMessage(GtkWidget* w /* <-- msg entry widget */, gpointer /* dat
 	/* XXX we should probably do the actual network stuff in a different
 	 * thread and have it call this once the message is actually sent. */
 	ssize_t nbytes;
+	int messageMaximumExceeded = len >= AES_CIPHERTEXT_BUFFER_SIZE;
+
+	char* tags[2] = {messageMaximumExceeded ? "error" : "self", NULL};
+
+	if(messageMaximumExceeded){
+		tsappend("Your message is too long.\n",tags,0);
+		return;
+	}
+
+	tsappend("me: ",tags,0);
+
+	unsigned char* key = isclient ? clientAESKey : serverAESKey;
+	
+	const struct AESCipher encryptedMessage = AESencrypt(message, key);
+	fprintf(stderr, "Encrypted message: %02x\n", encryptedMessage.ciphertext[0]);
+	fprintf(stderr, "Encrypted message length: %d\n", encryptedMessage.ciphertextLength);
+
+	unsigned char* buffer = convertStructToBuffer(&encryptedMessage);
+	size_t totalSize = getAESCipherBufferSize();
+
 	if ((nbytes = send(sockfd,message,len,0)) == -1)
 		error("send failed");
 
@@ -278,22 +444,33 @@ int main(int argc, char *argv[])
  * main loop for processing: */
 void* recvMsg(void*)
 {
-	size_t maxlen = 512;
-	char msg[maxlen+2]; /* might add \n and \0 */
+	size_t maxlen = getAESCipherBufferSize();
+	unsigned char input[maxlen]; /* might add \n and \0 */
 	ssize_t nbytes;
 	while (1) {
-		if ((nbytes = recv(sockfd,msg,maxlen,0)) == -1)
+		if ((nbytes = recv(sockfd,input,maxlen,0)) == -1)
 			error("recv failed");
 		if (nbytes == 0) {
 			/* XXX maybe show in a status message that the other
 			 * side has disconnected. */
 			return 0;
 		}
-		char* m = malloc(maxlen+2);
-		memcpy(m,msg,nbytes);
-		if (m[nbytes-1] != '\n')
-			m[nbytes++] = '\n';
-		m[nbytes] = 0;
+
+		struct AESCipher aesCipher = convertBufferToStruct(input);
+		fprintf(stderr, "Encrypted message: %02x\n", aesCipher.ciphertext[0]);
+		fprintf(stderr, "Encrypted message length: %d\n", aesCipher.ciphertextLength);
+		int plainTextLength = aesCipher.plaintextLength;
+
+		unsigned char* key = isclient ? serverAESKey : clientAESKey;
+
+		unsigned char* m = AESdecrypt(aesCipher, key);
+		
+
+		if (m[plainTextLength - 1] != '\n')
+			m[plainTextLength] = '\n';
+		m[plainTextLength + 1] = 0;
+
+		//If authentication is complete write the message, otherwise wait for authentication to complete
 		g_main_context_invoke(NULL,shownewmessage,(gpointer)m);
 	}
 	return 0;
