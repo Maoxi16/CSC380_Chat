@@ -18,6 +18,7 @@
 
 #ifndef PATH_MAX
 #define PATH_MAX 1024
+
 #endif
 
 static GtkTextBuffer* tbuf; /* transcript buffer */
@@ -37,6 +38,11 @@ void* recvMsg(void*);       /* for trecv */
 
 static int listensock, sockfd;
 static int isclient = 1;
+static int authenticated = 0;
+
+static unsigned char* clientAESKey;
+static unsigned char* serverAESKey;
+
 
 static void error(const char *msg)
 {
@@ -67,10 +73,14 @@ int initServerNet(int port)
 	if (sockfd < 0)
 		error("error on accept");
 	close(listensock);
-	fprintf(stderr, "connection made, starting session...\n");
+	fprintf(stderr, "connection made, awaiting authentication from client...\n");
+	if(authenticateServer() != 0){
+		error("Failure authenticating server");
+	}
 	/* at this point, should be able to send/recv on sockfd */
 	return 0;
 }
+
 int authenticateServer(){
 	unsigned char* proposed_session_key_ciphertext = malloc(RSA_KEY_LENGTH);
 
@@ -149,6 +159,8 @@ int authenticateServer(){
 	free(proposed_session_key_ciphertext);
 	return 0;
 }
+
+
 static int authenticateClient(){
 	const char* serverPublicKeyPath = "./keys/server/public.pem";
 
@@ -234,8 +246,11 @@ static int initClientNet(char* hostname, int port)
 	serv_addr.sin_family = AF_INET;
 	memcpy(&serv_addr.sin_addr.s_addr,server->h_addr,server->h_length);
 	serv_addr.sin_port = htons(port);
-	if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
+	if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0){
 		error("ERROR connecting");
+	}else if(authenticateClient() != 0){
+		error("Failure authenticating client");
+	}
 	/* at this point, should be able to send/recv on sockfd */
 	return 0;
 }
@@ -294,10 +309,10 @@ static void tsappend(char* message, char** tagnames, int ensurenewline)
 	gtk_text_buffer_delete_mark(tbuf,mark);
 }
 
+
+
 static void sendMessage(GtkWidget* w /* <-- msg entry widget */, gpointer /* data */)
 {
-	char* tags[2] = {"self",NULL};
-	tsappend("me: ",tags,0);
 	GtkTextIter mstart; /* start of message pointer */
 	GtkTextIter mend;   /* end of message pointer */
 	gtk_text_buffer_get_start_iter(mbuf,&mstart);
@@ -307,6 +322,7 @@ static void sendMessage(GtkWidget* w /* <-- msg entry widget */, gpointer /* dat
 	/* XXX we should probably do the actual network stuff in a different
 	 * thread and have it call this once the message is actually sent. */
 	ssize_t nbytes;
+
 	int messageMaximumExceeded = len >= AES_CIPHERTEXT_BUFFER_SIZE;
 
 	char* tags[2] = {messageMaximumExceeded ? "error" : "self", NULL};
@@ -327,10 +343,10 @@ static void sendMessage(GtkWidget* w /* <-- msg entry widget */, gpointer /* dat
 	unsigned char* buffer = convertStructToBuffer(&encryptedMessage);
 	size_t totalSize = getAESCipherBufferSize();
 
-	if ((nbytes = send(sockfd,message,len,0)) == -1)
+	if ((nbytes = send(sockfd,buffer,totalSize,0)) == -1)
 		error("send failed");
 
-	tsappend(message,NULL,1);
+	tsappend(message,NULL,2);
 	free(message);
 	/* clear message text and reset focus */
 	gtk_text_buffer_delete(mbuf,&mstart,&mend);
@@ -434,6 +450,7 @@ int main(int argc, char *argv[])
 	gtk_text_buffer_create_tag(tbuf,"status","foreground","#657b83","font","italic",NULL);
 	gtk_text_buffer_create_tag(tbuf,"friend","foreground","#6c71c4","font","bold",NULL);
 	gtk_text_buffer_create_tag(tbuf,"self","foreground","#268bd2","font","bold",NULL);
+	gtk_text_buffer_create_tag(tbuf, "error", "foreground", "#dc322f", "font", "bold", NULL);
 
 	/* start receiver thread: */
 	if (pthread_create(&trecv,0,recvMsg,0)) {
