@@ -1,0 +1,12 @@
+Assumptions:
+1. The handshake protocol employs RSA encryption, assuming that both the client knows the server's public key, and the server knows the client's public key.
+2. Although an adversary might obtain the public keys of the communicating parties, the private keys are considered secure throughout the communication.
+3. The server's IP address is known to the client, but the server is unaware of the originating IP of the client's connection. This necessitates establishing the client’s identity before proceeding with further communications.
+
+Claims:
+1. The handshake ensures that the server and client can confidently verify each other's identities.
+2. All communications within a session maintain perfect secrecy because the session key is known only to the communicating parties.
+3. The compromise of a single session key does not affect other session keys.
+4. If an attacker gains access to the server’s private key and has previously recorded the messages, they could decrypt these messages. However, without the recorded messages, access to the private key alone does not enable message decryption.
+5. An attacker with access to a private key cannot cause buffer overflow due to message size restrictions.
+6. It is not feasible for an attacker to reroute messages to a different client, as the authentication process requires consistent communication from the initiating party throughout the session.
