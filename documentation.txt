@@ -10,3 +10,4 @@ Claims:
 4. If an attacker gains access to the server’s private key and has previously recorded the messages, they could decrypt these messages. However, without the recorded messages, access to the private key alone does not enable message decryption.
 5. An attacker with access to a private key cannot cause buffer overflow due to message size restrictions.
 6. It is not feasible for an attacker to reroute messages to a different client, as the authentication process requires consistent communication from the initiating party throughout the session.
+

@@ -1,0 +1,7 @@
+After reviewing the source code, assumptions, and security claims provided by the secure chat program, several potential vulnerabilities 
+and areas of concern have been identified that challenge the robustness of their security claims.
+First, the lack of transmission encryption in network communications, such as TLS/SSL, poses a significant risk that data can be eavesdropped 
+and tampered with despite claims of secure message confidentiality.
+Static HMAC salt used in encryption operations may also reduce the effectiveness of encryption protection over time or across multiple sessions.
+In addition, the code has potential issues related to buffer management and memory processing, specifically, there may be buffer overflows in file path processing 
+and memory leaks in dynamic memory allocation, which can be exploited to harm the overall system and usability.
